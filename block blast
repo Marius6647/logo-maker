@@ -1,0 +1,356 @@
+<!DOCTYPE html>
+<html lang="ro">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
+  <title>Block Blast – joc HTML5</title>
+  <style>
+    :root{
+      --bg:#0f1220; --panel:#171a2b; --grid:#20243a; --cell:#2a2f4a; --accent:#7c9cff; --good:#25d366; --bad:#ff5a5a; --text:#e9ecff;
+    }
+    *{box-sizing:border-box}
+    body{margin:0;background:var(--bg);color:var(--text);font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,Inter,Arial,sans-serif;display:flex;flex-direction:column;align-items:center;min-height:100svh}
+    header{width:100%;max-width:720px;padding:16px 16px 8px}
+    .topbar{display:flex;justify-content:space-between;align-items:center}
+    .title{font-weight:800;letter-spacing:.5px}
+    .btn{background:var(--panel);color:var(--text);border:1px solid #2a3052;padding:10px 14px;border-radius:14px;font-weight:700;cursor:pointer;box-shadow:0 6px 16px rgba(0,0,0,.25);}
+    .btn:active{transform:translateY(1px)}
+
+    .hud{display:flex;gap:12px;margin-top:10px}
+    .card{flex:1;background:var(--panel);border:1px solid #222744;border-radius:16px;padding:12px 14px;text-align:center}
+    .label{opacity:.7;font-size:12px}
+    .value{font-size:22px;font-weight:800;margin-top:6px}
+
+    main{width:100%;max-width:720px;padding:8px 16px 24px;display:grid;grid-template-columns:1fr;gap:14px}
+
+    .board-wrap{background:var(--panel);border:1px solid #202646;border-radius:20px;padding:14px;display:flex;justify-content:center}
+    .board{--n:10;display:grid;grid-template-columns:repeat(var(--n),1fr);gap:6px;touch-action:none}
+    .cell{width:32px;height:32px;background:var(--grid);border-radius:8px;transition:background .12s, transform .12s}
+    .cell.filled{background:var(--cell)}
+    .cell.preview-ok{outline:2px solid var(--good);outline-offset:-2px}
+    .cell.preview-bad{outline:2px solid var(--bad);outline-offset:-2px}
+
+    /* Palette */
+    .palette{display:flex;gap:10px;justify-content:space-between}
+    .piece{background:var(--panel);border:1px solid #202646;border-radius:16px;padding:10px;flex:1;display:flex;justify-content:center;align-items:center;min-height:92px;position:relative}
+    .piece-inner{display:grid;grid-template-columns:repeat(5,18px);grid-auto-rows:18px;gap:3px}
+    .pcell{width:18px;height:18px;background:#39406a;border-radius:4px}
+    .pcell.on{background:var(--accent)}
+    .piece.selected{box-shadow:0 0 0 2px var(--accent) inset}
+    .piece.disabled{opacity:.35;filter:grayscale(1)}
+
+    /* Overlay */
+    .overlay{position:fixed;inset:0;background:rgba(5,8,16,.7);display:none;align-items:center;justify-content:center;padding:20px}
+    .dialog{background:var(--panel);border:1px solid #202646;border-radius:24px;max-width:420px;width:100%;padding:20px;text-align:center}
+    .dialog h2{margin:8px 0 0}
+    .dialog p{opacity:.8}
+
+    /* Mobile tuning */
+    @media (max-width:520px){
+      .cell{width:28px;height:28px}
+      .piece-inner{grid-template-columns:repeat(5,16px);grid-auto-rows:16px}
+      .pcell{width:16px;height:16px}
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="topbar">
+      <div class="title">🟦 Block Blast – versiune web</div>
+      <button class="btn" id="newGame">Joc nou</button>
+    </div>
+    <div class="hud">
+      <div class="card"><div class="label">Scor</div><div class="value" id="score">0</div></div>
+      <div class="card"><div class="label">Record</div><div class="value" id="best">0</div></div>
+      <div class="card"><div class="label">Linii curățate</div><div class="value" id="lines">0</div></div>
+    </div>
+  </header>
+
+  <main>
+    <div class="board-wrap">
+      <div id="board" class="board"></div>
+    </div>
+
+    <div class="palette" id="palette"></div>
+  </main>
+
+  <div class="overlay" id="overlay">
+    <div class="dialog">
+      <h2>Joc terminat</h2>
+      <p>Nu mai există loc pentru piesele rămase.</p>
+      <div style="display:flex;gap:10px;justify-content:center;margin-top:12px">
+        <button class="btn" id="again">Joacă din nou</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // --- Util ---
+    const rnd = (n)=>Math.floor(Math.random()*n);
+
+    // Set de piese (matrici 5x5)
+    const SHAPES = [
+      // 1-4 linii
+      [[1]],
+      [[1,1]],
+      [[1,1,1]],
+      [[1,1,1,1]],
+      [[1,1,1,1,1]],
+      // patrat 2x2 / 3x3 punctat
+      [[1,1],[1,1]],
+      [[1,1,1],[1,0,1],[1,1,1]],
+      // L-uri
+      [[1,0],[1,0],[1,1]],
+      [[0,1],[0,1],[1,1]],
+      [[1,0,0],[1,1,1]],
+      [[0,0,1],[1,1,1]],
+      // T
+      [[1,1,1],[0,1,0]],
+      // Z / S
+      [[1,1,0],[0,1,1]],
+      [[0,1,1],[1,1,0]],
+      // plus
+      [[0,1,0],[1,1,1],[0,1,0]],
+      // coloană 3
+      [[1],[1],[1]],
+      // L lung
+      [[1,0,0,0],[1,1,1,1]],
+    ];
+
+    const BOARD_N = 10;
+    const boardEl = document.getElementById('board');
+    const paletteEl = document.getElementById('palette');
+    const scoreEl = document.getElementById('score');
+    const bestEl = document.getElementById('best');
+    const linesEl = document.getElementById('lines');
+    const overlay = document.getElementById('overlay');
+
+    let board = []; // 10x10 0/1
+    let pieces = []; // 3 piese active
+    let selectedIndex = -1;
+    let score = 0, lines = 0, best = +localStorage.getItem('bb_best')||0;
+    bestEl.textContent = best;
+
+    function resetBoard(){
+      board = Array.from({length:BOARD_N},()=>Array(BOARD_N).fill(0));
+      boardEl.style.setProperty('--n', BOARD_N);
+      boardEl.innerHTML = '';
+      for(let i=0;i<BOARD_N*BOARD_N;i++){
+        const div = document.createElement('div');
+        div.className = 'cell';
+        div.dataset.i = i;
+        div.addEventListener('pointerdown', onCellPointer);
+        div.addEventListener('pointerenter', onCellHover);
+        div.addEventListener('pointerleave', clearPreview);
+        boardEl.appendChild(div);
+      }
+    }
+
+    function drawBoard(){
+      const cells = boardEl.children;
+      for(let r=0;r<BOARD_N;r++){
+        for(let c=0;c<BOARD_N;c++){
+          const idx = r*BOARD_N+c;
+          cells[idx].classList.toggle('filled', !!board[r][c]);
+        }
+      }
+    }
+
+    function randomPiece(){
+      // clone shape and trim
+      const raw = SHAPES[rnd(SHAPES.length)].map(row=>row.slice());
+      return trimShape(raw);
+    }
+
+    function trimShape(shape){
+      // remove empty rows/cols around
+      // trim rows
+      while(shape.length && shape[0].every(v=>v===0)) shape.shift();
+      while(shape.length && shape[shape.length-1].every(v=>v===0)) shape.pop();
+      // trim cols
+      let left=0,right=shape[0].length-1;
+      while(shape.every(row=>row[left]===0)) left++;
+      while(shape.every(row=>row[right]===0)) right--;
+      return shape.map(row=>row.slice(left,right+1));
+    }
+
+    function newPieces(){
+      pieces = [randomPiece(), randomPiece(), randomPiece()];
+      selectedIndex = -1;
+      renderPalette();
+      updateNoMovesCheck();
+    }
+
+    function renderPalette(){
+      paletteEl.innerHTML = '';
+      pieces.forEach((shape, idx)=>{
+        const card = document.createElement('button');
+        card.className = 'piece btn-reset';
+        card.disabled = !shape;
+        if(!shape) card.classList.add('disabled');
+        if(idx===selectedIndex) card.classList.add('selected');
+        card.addEventListener('click', ()=>{
+          if(!pieces[idx]) return;
+          selectedIndex = (selectedIndex===idx ? -1 : idx);
+          renderPalette();
+          clearPreview();
+        });
+        const inner = document.createElement('div');
+        inner.className = 'piece-inner';
+        if(shape){
+          for(let r=0;r<5;r++){
+            for(let c=0;c<5;c++){
+              const cell = document.createElement('div');
+              cell.className = 'pcell';
+              if(shape[r] && shape[r][c]) cell.classList.add('on');
+              inner.appendChild(cell);
+            }
+          }
+        }
+        card.appendChild(inner);
+        paletteEl.appendChild(card);
+      });
+    }
+
+    function coordsFromIndex(i){
+      return [Math.floor(i/BOARD_N), i%BOARD_N];
+    }
+
+    function canPlace(shape, r0, c0){
+      for(let r=0;r<shape.length;r++){
+        for(let c=0;c<shape[0].length;c++){
+          if(shape[r][c]){
+            const rr=r0+r, cc=c0+c;
+            if(rr<0||cc<0||rr>=BOARD_N||cc>=BOARD_N) return false;
+            if(board[rr][cc]) return false;
+          }
+        }
+      }
+      return true;
+    }
+
+    function placeShape(shape, r0, c0){
+      let placed=0;
+      for(let r=0;r<shape.length;r++){
+        for(let c=0;c<shape[0].length;c++){
+          if(shape[r][c]){
+            board[r0+r][c0+c]=1; placed++;
+          }
+        }
+      }
+      score += placed; // 1 punct per pătrățel
+      scoreEl.textContent = score;
+      drawBoard();
+      clearLines();
+      // consuma piesa
+      pieces[selectedIndex] = null;
+      selectedIndex = -1;
+      renderPalette();
+      // dacă toate 3 consumate -> generează altele
+      if(pieces.every(p=>!p)) newPieces();
+      updateNoMovesCheck();
+    }
+
+    function clearLines(){
+      const fullRows = [];
+      const fullCols = [];
+      for(let r=0;r<BOARD_N;r++) if(board[r].every(v=>v===1)) fullRows.push(r);
+      for(let c=0;c<BOARD_N;c++){
+        let full=true; for(let r=0;r<BOARD_N;r++) if(!board[r][c]){full=false;break}
+        if(full) fullCols.push(c);
+      }
+      if(fullRows.length||fullCols.length){
+        fullRows.forEach(r=> board[r].fill(0));
+        fullCols.forEach(c=>{ for(let r=0;r<BOARD_N;r++) board[r][c]=0 });
+        const cleared = fullRows.length + fullCols.length;
+        lines += cleared;
+        score += cleared*10; // bonus
+        scoreEl.textContent = score;
+        linesEl.textContent = lines;
+        drawBoard();
+      }
+    }
+
+    function updateNoMovesCheck(){
+      if(pieces.every(p=>!p)) return; // tocmai s-au resetat
+      let anyFit = false;
+      outer: for(const shape of pieces){
+        if(!shape) continue;
+        for(let r=0;r<BOARD_N;r++){
+          for(let c=0;c<BOARD_N;c++){
+            if(canPlace(shape,r,c)){ anyFit=true; break outer; }
+          }
+        }
+      }
+      if(!anyFit){
+        gameOver();
+      }
+    }
+
+    function gameOver(){
+      best = Math.max(best, score);
+      localStorage.setItem('bb_best', best);
+      bestEl.textContent = best;
+      overlay.style.display = 'flex';
+    }
+
+    function startGame(){
+      overlay.style.display = 'none';
+      score = 0; lines = 0; scoreEl.textContent = 0; linesEl.textContent = 0;
+      resetBoard();
+      drawBoard();
+      newPieces();
+    }
+
+    // --- Interacțiune ---
+    function onCellPointer(e){
+      if(selectedIndex<0) return; // nicio piesă selectată
+      const idx = +e.currentTarget.dataset.i; const [r,c]=coordsFromIndex(idx);
+      const shape = pieces[selectedIndex];
+      if(!shape) return;
+      if(canPlace(shape,r,c)){
+        placeShape(shape,r,c);
+      }else{
+        // mic efect de respingere
+        e.currentTarget.style.transform = 'scale(.95)';
+        setTimeout(()=> e.currentTarget.style.transform = '', 90);
+      }
+      clearPreview();
+    }
+
+    function onCellHover(e){
+      if(selectedIndex<0) return;
+      const idx = +e.currentTarget.dataset.i; const [r,c]=coordsFromIndex(idx);
+      const shape = pieces[selectedIndex]; if(!shape) return;
+      paintPreview(shape,r,c, canPlace(shape,r,c));
+    }
+
+    function paintPreview(shape,r0,c0, ok){
+      const cells = boardEl.children;
+      for(let r=0;r<shape.length;r++){
+        for(let c=0;c<shape[0].length;c++){
+          if(shape[r][c]){
+            const rr=r0+r, cc=c0+c;
+            if(rr<0||cc<0||rr>=BOARD_N||cc>=BOARD_N) continue;
+            const idx = rr*BOARD_N+cc;
+            cells[idx].classList.add(ok?'preview-ok':'preview-bad');
+          }
+        }
+      }
+    }
+
+    function clearPreview(){
+      [...boardEl.children].forEach(el=>{
+        el.classList.remove('preview-ok','preview-bad');
+      });
+    }
+
+    // Touch friendliness: tap select piece, tap board to place.
+    document.getElementById('newGame').addEventListener('click', startGame);
+    document.getElementById('again').addEventListener('click', startGame);
+
+    // Init
+    startGame();
+  </script>
+</body>
+</html>
